@@ -1,0 +1,16 @@
+# Build output
+QuotaStrip.app/
+*.zip
+
+# macOS
+.DS_Store
+
+# Local agent config (never publish — contains machine paths)
+.claude/
+
+# Python
+__pycache__/
+*.pyc
+
+# Local promo drafts
+xiaohongshu-post.md
