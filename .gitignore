@@ -11,6 +11,3 @@ QuotaStrip.app/
 # Python
 __pycache__/
 *.pyc
-
-# Local promo drafts
-xiaohongshu-post.md
