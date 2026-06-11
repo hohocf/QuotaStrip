@@ -79,14 +79,18 @@ def claude_token():
     return json.loads(out)["claudeAiOauth"]["accessToken"]
 
 
-def expire_windows(data, now):
-    """Windows in cached data whose reset time has passed are shown as 0% (same as Codex)."""
+def degrade_cached(data, now, stale):
+    """Adjust cached windows for display when we're serving the cache (live API unavailable):
+      - reset time has passed        -> window rolled over; new value unknown -> pct None ("—")
+      - stale AND no future reset     -> last success was idle/long ago; current value unknown
+    A fresh-enough cache with a valid future reset is shown as-is (still trustworthy)."""
     out = dict(data)
     for key in ("five", "week"):
         w = dict(data[key])
         reset = w.get("reset")
-        if reset is not None and reset < now:
-            w = {"pct": 0.0, "reset": None}
+        has_future_reset = reset is not None and reset >= now
+        if not has_future_reset and (reset is not None or stale):
+            w = {"pct": None, "reset": None}
         out[key] = w
     return out
 
@@ -101,8 +105,8 @@ def claude_fetch(force=False):
         pass
 
     def cached_result():
-        data = expire_windows(cached["data"], now)
-        return data, (now - cached["ts"]) > CLAUDE_STALE_AFTER
+        stale = (now - cached["ts"]) > CLAUDE_STALE_AFTER
+        return degrade_cached(cached["data"], now, stale), stale
 
     if cached and not force and (now - cached["ts"] < CLAUDE_CACHE_TTL
                                  or now < cached.get("cooldown_until", 0)):

@@ -53,7 +53,7 @@ enum Paths {
 // MARK: - Data model (matches quota.py json output)
 
 struct QuotaWindow: Decodable {
-    var pct: Double
+    var pct: Double?   // nil = unknown (window reset but the live value can't be fetched yet)
     var reset: Double?
 }
 
@@ -214,11 +214,24 @@ final class QuotaView: NSView {
 
         drawText(label, at: NSPoint(x: xLabel, y: yText + 1.5), color: NSColor(white: 0.78, alpha: 1), size: 11.5)
 
-        // Progress bar
+        // Empty bar track
         let barRect = NSRect(x: xBar, y: yBar, width: wBar, height: hBar)
         NSColor(white: 0.30, alpha: 1).setFill()
         NSBezierPath(roundedRect: barRect, xRadius: hBar / 2, yRadius: hBar / 2).fill()
-        let pct = min(max(window.pct, 0), 100)
+
+        // Unknown value (window reset but live data unavailable): show "—", no fill, no reset time.
+        guard let raw = window.pct else {
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .bold),
+                .foregroundColor: NSColor(white: 0.6, alpha: 1),
+            ]
+            let s = "—" as NSString
+            let sz = s.size(withAttributes: attrs)
+            s.draw(at: NSPoint(x: xPctRight - sz.width, y: yText), withAttributes: attrs)
+            return
+        }
+
+        let pct = min(max(raw, 0), 100)
         if pct > 0 {
             let w = max(barRect.width * CGFloat(pct) / 100, hBar)
             let fillRect = NSRect(x: barRect.minX, y: barRect.minY, width: w, height: hBar)
