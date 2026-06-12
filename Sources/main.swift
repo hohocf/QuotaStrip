@@ -50,6 +50,12 @@ enum Paths {
     static let fetchLog = cacheDir + "fetch.log"
 }
 
+// MARK: - Tiny localization (follows the system language)
+
+let isChinese = Locale.preferredLanguages.first?.hasPrefix("zh") ?? false
+
+func L(_ en: String, _ zh: String) -> String { isChinese ? zh : en }
+
 // MARK: - Data model (matches quota.py json output)
 
 struct QuotaWindow: Decodable {
@@ -176,7 +182,7 @@ final class QuotaView: NSView {
             return
         }
         guard s.ok, let five = s.five, let week = s.week else {
-            drawText("no data", at: NSPoint(x: xLabel, y: 7), color: .gray, size: 13)
+            drawText(L("no data", "暂无数据"), at: NSPoint(x: xLabel, y: 7), color: .gray, size: 13)
             return
         }
 
@@ -364,20 +370,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
         statusItem.button?.image = AppDelegate.gaugeIcon()
         let menu = NSMenu()
         menu.delegate = self   // refresh dynamic item states each time the menu opens
-        menu.addItem(NSMenuItem(title: "Refresh now", action: #selector(refreshForced), keyEquivalent: "r"))
-        menu.addItem(NSMenuItem(title: "Re-show Touch Bar", action: #selector(present), keyEquivalent: "t"))
+        menu.addItem(NSMenuItem(title: L("Refresh now", "立即刷新"), action: #selector(refreshForced), keyEquivalent: "r"))
+        menu.addItem(NSMenuItem(title: L("Re-show Touch Bar", "重新显示 Touch Bar"), action: #selector(present), keyEquivalent: "t"))
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Open Claude usage page", action: #selector(openClaude), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Open Codex usage page", action: #selector(openCodex), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "View connection log", action: #selector(openLog), keyEquivalent: "l"))
+        menu.addItem(NSMenuItem(title: L("Open Claude usage page", "打开 Claude 用量页"), action: #selector(openClaude), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: L("Open Codex usage page", "打开 Codex 用量页"), action: #selector(openCodex), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: L("View connection log", "查看连接日志"), action: #selector(openLog), keyEquivalent: "l"))
         menu.addItem(.separator())
-        escPermItem = NSMenuItem(title: "Enable esc key (grant Accessibility)…",
+        escPermItem = NSMenuItem(title: L("Enable esc key (grant Accessibility)…", "启用 esc 键（授权辅助功能）…"),
                                  action: #selector(grantAccessibility), keyEquivalent: "")
         menu.addItem(escPermItem)
-        loginItem = NSMenuItem(title: "Start at login", action: #selector(toggleLogin), keyEquivalent: "")
+        loginItem = NSMenuItem(title: L("Start at login", "开机自启"), action: #selector(toggleLogin), keyEquivalent: "")
         menu.addItem(loginItem)
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit QuotaStrip", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: L("Quit QuotaStrip", "退出 QuotaStrip"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         statusItem.menu = menu
     }
 
@@ -439,7 +445,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     @objc private func toggleLogin(_ sender: NSMenuItem) {
         guard #available(macOS 13.0, *) else {
             let a = NSAlert()
-            a.messageText = "Start at login needs macOS 13 or later."
+            a.messageText = L("Start at login needs macOS 13 or later.", "开机自启需要 macOS 13 或更高版本。")
             a.runModal()
             return
         }
@@ -453,7 +459,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
             }
         } catch {
             let a = NSAlert()
-            a.messageText = "Could not change the login item: \(error.localizedDescription)"
+            a.messageText = L("Could not change the login item: ", "无法更改登录项：") + error.localizedDescription
             a.runModal()
         }
     }
