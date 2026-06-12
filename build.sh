@@ -15,7 +15,7 @@ mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources"
 
 cp Sources/Info.plist "$CONTENTS/Info.plist"
 cp Resources/quota.py Resources/claude-logo.png Resources/codex-logo.png \
-   Resources/codex_notify.sh "$CONTENTS/Resources/"
+   Resources/codex_notify.sh Resources/AppIcon.icns "$CONTENTS/Resources/"
 chmod +x "$CONTENTS/Resources/codex_notify.sh"
 
 # Compile one slice per architecture, then merge with lipo.

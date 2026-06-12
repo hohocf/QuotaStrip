@@ -323,6 +323,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     private var quotaTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Single instance: a second copy (e.g. login item + manual launch) would fight
+        // over the Touch Bar, so just quit quietly.
+        let mine = Bundle.main.bundleIdentifier ?? ""
+        let twins = NSRunningApplication.runningApplications(withBundleIdentifier: mine)
+        if twins.count > 1 {
+            NSApp.terminate(nil)
+            return
+        }
+
         setupStatusItem()
         claudeView.onTap = { [weak self] in self?.syncStatusAttention() }
         codexView.onTap = { [weak self] in self?.syncStatusAttention() }
