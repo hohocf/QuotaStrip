@@ -310,7 +310,7 @@ extension NSTouchBarItem.Identifier {
     static let codexQuota = NSTouchBarItem.Identifier("qs.codex")
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private let fetcher = QuotaFetcher()
     private let claudeView = QuotaView(iconFile: "claude-logo", bundleID: "com.anthropic.claudefordesktop",
@@ -327,9 +327,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate {
         claudeView.onTap = { [weak self] in self?.syncStatusAttention() }
         codexView.onTap = { [weak self] in self?.syncStatusAttention() }
 
-        // The esc key simulation needs Accessibility permission; prompt on first launch.
-        let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        AXIsProcessTrustedWithOptions(opts)
+        // The esc key needs Accessibility permission. Check SILENTLY here (no prompt) so the
+        // app never nags on launch — granting is opt-in via the "Enable esc key…" menu item.
 
         bar = NSTouchBar()
         bar.delegate = self
@@ -348,10 +347,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate {
 
     // MARK: Menu bar
 
+    private var loginItem: NSMenuItem!
+    private var escPermItem: NSMenuItem!
+
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.image = AppDelegate.gaugeIcon()
         let menu = NSMenu()
+        menu.delegate = self   // refresh dynamic item states each time the menu opens
         menu.addItem(NSMenuItem(title: "Refresh now", action: #selector(refreshForced), keyEquivalent: "r"))
         menu.addItem(NSMenuItem(title: "Re-show Touch Bar", action: #selector(present), keyEquivalent: "t"))
         menu.addItem(.separator())
@@ -359,12 +362,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate {
         menu.addItem(NSMenuItem(title: "Open Codex usage page", action: #selector(openCodex), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "View connection log", action: #selector(openLog), keyEquivalent: "l"))
         menu.addItem(.separator())
-        let login = NSMenuItem(title: "Start at login", action: #selector(toggleLogin), keyEquivalent: "")
-        login.state = loginEnabled ? .on : .off
-        menu.addItem(login)
+        escPermItem = NSMenuItem(title: "Enable esc key (grant Accessibility)…",
+                                 action: #selector(grantAccessibility), keyEquivalent: "")
+        menu.addItem(escPermItem)
+        loginItem = NSMenuItem(title: "Start at login", action: #selector(toggleLogin), keyEquivalent: "")
+        menu.addItem(loginItem)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit QuotaStrip", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         statusItem.menu = menu
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        loginItem.state = loginEnabled ? .on : .off
+        // Hide the esc-permission item once Accessibility is granted (silent check, no prompt).
+        escPermItem.isHidden = AXIsProcessTrusted()
+    }
+
+    /// Opt-in: only here do we show the system Accessibility prompt, when the user asks for it.
+    @objc private func grantAccessibility() {
+        let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        if !AXIsProcessTrustedWithOptions(opts) {
+            // Also open the pane directly in case the prompt was dismissed previously.
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                NSWorkspace.shared.open(url)
+            }
+        }
     }
 
     /// Icon: two bars of different length (a usage gauge); template image adapts to light/dark.

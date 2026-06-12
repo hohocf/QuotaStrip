@@ -71,12 +71,19 @@ def iso_to_epoch(s):
 
 # ---------------------------------------------------------------- Claude
 
-def claude_token():
+def claude_credential():
+    """Read the Claude Code OAuth credential from the keychain (read-only)."""
     out = subprocess.run(
         ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
         capture_output=True, text=True, timeout=10,
     ).stdout.strip()
-    return json.loads(out)["claudeAiOauth"]["accessToken"]
+    return json.loads(out)["claudeAiOauth"]
+
+
+def token_expired(cred, now):
+    """True if the stored access token is past its expiry (expiresAt is epoch ms)."""
+    exp = cred.get("expiresAt")
+    return exp is not None and (exp / 1000.0) < (now - 30)  # 30s skew
 
 
 def degrade_cached(data, now, stale):
@@ -112,11 +119,27 @@ def claude_fetch(force=False):
                                  or now < cached.get("cooldown_until", 0)):
         return cached_result()
 
+    # Read the credential and check expiry BEFORE hitting the network: an expired token
+    # only earns a 401 that still counts against the rate limit, so don't waste the request.
+    try:
+        cred = claude_credential()
+    except Exception as e:
+        log_fetch("keychain read failed: %s" % e)
+        if cached:
+            return cached_result()
+        return None, True
+
+    if token_expired(cred, now):
+        log_fetch("token expired — run `claude` or open Claude Code to refresh it")
+        if cached:
+            return cached_result()
+        return None, True
+
     try:
         req = urllib.request.Request(
             "https://api.anthropic.com/api/oauth/usage",
             headers={
-                "Authorization": f"Bearer {claude_token()}",
+                "Authorization": f"Bearer {cred['accessToken']}",
                 "anthropic-beta": "oauth-2025-04-20",
             },
         )
