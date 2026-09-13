@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.1
+
+- Use the original 24-hour clock consistently in full reset dates and compact 5h reset clocks.
+
+- Expand the Codex-only Touch Bar panel to show each reset countdown alongside its local date, 24-hour time, and abbreviated English weekday. Keep the compact layout when both services are enabled.
+
 ## 1.1.0
 
 - Add persistent menu checkboxes for Claude Code and Codex. Disabled services are hidden and excluded from automatic and manual refreshes; switching cancels the current reader.

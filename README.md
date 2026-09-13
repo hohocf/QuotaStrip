@@ -162,4 +162,8 @@ The menu automatically displays the Codex plan from local `plan_type` metadata (
 
 ### Version information
 
-Choose **About QuotaStrip…** in the menu bar to see the version, build number, and GitHub project link. Current version: **1.1.0 (build 2)**. See [CHANGELOG.md](CHANGELOG.md) for changes.
+Choose **About QuotaStrip…** in the menu bar to see the version, build number, and GitHub project link. Current version: **1.1.1 (build 3)**. See [CHANGELOG.md](CHANGELOG.md) for changes.
+
+With only Codex enabled, the wider panel shows each reset countdown plus its date, 24-hour time, and abbreviated English weekday (e.g. Sat) in the system time zone. Enabling both services retains the compact layout.
+
+Clock times consistently use the original 24-hour format, such as `15:30`, including the compact 5h reset clock. Full reset example: `2026-09-19 15:30 Sat`.

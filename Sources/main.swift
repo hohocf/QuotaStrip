@@ -132,6 +132,17 @@ final class QuotaView: NSView {
     var onTap: (() -> Void)?
 
     static let viewWidth: CGFloat = 300
+    private static let expandedWidth: CGFloat = 580
+    private var panelWidthConstraint: NSLayoutConstraint?
+    var showsResetDetails = false {
+        didSet {
+            guard oldValue != showsResetDetails else { return }
+            panelWidthConstraint?.constant = preferredWidth
+            invalidateIntrinsicContentSize()
+            needsDisplay = true
+        }
+    }
+    private var preferredWidth: CGFloat { showsResetDetails ? Self.expandedWidth : Self.viewWidth }
 
     // Horizontal layout columns
     private let xLabel: CGFloat = 36
@@ -148,6 +159,8 @@ final class QuotaView: NSView {
         self.flagName = flagName
         self.fallbackURL = fallbackURL
         super.init(frame: NSRect(x: 0, y: 0, width: QuotaView.viewWidth, height: 30))
+        panelWidthConstraint = widthAnchor.constraint(equalToConstant: preferredWidth)
+        panelWidthConstraint?.isActive = true
         let click = NSClickGestureRecognizer(target: self, action: #selector(tapped))
         click.allowedTouchTypes = [.direct]
         addGestureRecognizer(click)
@@ -156,7 +169,7 @@ final class QuotaView: NSView {
     required init?(coder: NSCoder) { fatalError("not supported") }
 
     override var isFlipped: Bool { true }
-    override var intrinsicContentSize: NSSize { NSSize(width: QuotaView.viewWidth, height: 30) }
+    override var intrinsicContentSize: NSSize { NSSize(width: preferredWidth, height: 30) }
 
     // Tap: clear the attention flag, then bring the matching desktop app to the front.
     // Note: NSRunningApplication.activate() is refused for background apps on macOS 14+,
@@ -280,13 +293,17 @@ final class QuotaView: NSView {
 
         // Reset time: 5h row shows a clock time (24h), 7d row shows the remaining duration.
         // The 5h clock turns yellow within the last 30 min — a nudge to use up the window.
-        let resetStr = resetStyle == .clock ? clockText(window.reset) : remainingText(window.reset)
+        let resetStr = !showsResetDetails && resetStyle == .clock ? clockText(window.reset) : remainingText(window.reset)
         var resetColor = NSColor(white: 0.88, alpha: 1)
         if resetStyle == .clock, let r = window.reset {
             let remain = r - Date().timeIntervalSince1970
             if remain > 0 && remain < 1800 { resetColor = .systemYellow }
         }
         drawText(resetStr, at: NSPoint(x: xReset, y: yText + 1.5), color: resetColor, size: 11.5)
+        if showsResetDetails {
+            drawText(resetDateText(window.reset), at: NSPoint(x: 324, y: yText + 1.5),
+                     color: resetColor, size: 11.5)
+        }
     }
 
     private func barColor(_ pct: Double) -> NSColor {
@@ -306,9 +323,18 @@ final class QuotaView: NSView {
         let date = Date(timeIntervalSince1970: r)
         guard date > Date() else { return "" }
         let fmt = DateFormatter()
-        fmt.locale = Locale(identifier: "en_US_POSIX")  // force 24h, no am/pm
+        fmt.locale = Locale(identifier: "en_US_POSIX")  // consistent 24-hour clock
         fmt.dateFormat = "HH:mm"
         return "↻" + fmt.string(from: date)
+    }
+
+    private func resetDateText(_ reset: Double?) -> String {
+        guard let reset, reset > Date().timeIntervalSince1970 else { return "" }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .autoupdatingCurrent
+        formatter.dateFormat = "yyyy-MM-dd HH:mm EEE"
+        return formatter.string(from: Date(timeIntervalSince1970: reset))
     }
 
     private func remainingText(_ reset: Double?) -> String {
@@ -358,6 +384,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     private var codexPlanItem: NSMenuItem!
 
     private func updateVisibleServices() {
+        codexView.showsResetDetails = codexEnabled && !claudeEnabled
         bar.defaultItemIdentifiers = [.esc]
             + (claudeEnabled ? [.claudeQuota] : [])
             + (codexEnabled ? [.codexQuota] : [])
@@ -644,10 +671,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
             item.view = b
         case .claudeQuota:
             item.view = claudeView
-            claudeView.widthAnchor.constraint(equalToConstant: QuotaView.viewWidth).isActive = true
         case .codexQuota:
             item.view = codexView
-            codexView.widthAnchor.constraint(equalToConstant: QuotaView.viewWidth).isActive = true
         default:
             return nil
         }
