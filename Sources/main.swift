@@ -60,6 +60,8 @@ func L(_ en: String, _ zh: String) -> String { isChinese ? zh : en }
 
 struct QuotaWindow: Decodable {
     var pct: Double?   // nil = unknown (window reset but the live value can't be fetched yet)
+    var label: String?
+    var minutes: Double?
     var reset: Double?
 }
 
@@ -68,6 +70,8 @@ struct QuotaService: Decodable {
     var stale: Bool?
     var five: QuotaWindow?
     var week: QuotaWindow?
+    var windows: [QuotaWindow]?
+    var plan_type: String?
     var attention: Bool?
 }
 
@@ -80,23 +84,38 @@ final class QuotaFetcher {
     // quota.py is bundled inside the app, so QuotaStrip.app runs from anywhere.
     private let scriptPath = Bundle.main.path(forResource: "quota", ofType: "py")
 
-    func fetch(force: Bool = false, _ completion: @escaping (QuotaPayload?) -> Void) {
-        guard let scriptPath else { completion(nil); return }
+    private var activeTask: Process?
+    private var generation = 0
+
+    func cancel() {
+        generation += 1
+        if let task = activeTask, task.isRunning { task.terminate() }
+        activeTask = nil
+    }
+
+    func fetch(claude: Bool, codex: Bool, force: Bool = false,
+               _ completion: @escaping (QuotaPayload?) -> Void) {
+        // Launch/cancel on the main thread so a disabled service cannot start later.
+        guard activeTask == nil, claude || codex, let scriptPath else { return }
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        task.arguments = [scriptPath, "json"] + (force ? ["--force"] : [])
+            + (claude ? [] : ["--no-claude"]) + (codex ? [] : ["--no-codex"])
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+        let requestGeneration = generation
+        do { try task.run() } catch { completion(nil); return }
+        activeTask = task
         DispatchQueue.global(qos: .utility).async {
-            let task = Process()
-            task.launchPath = "/usr/bin/python3"
-            task.arguments = [scriptPath, "json"] + (force ? ["--force"] : [])
-            let pipe = Pipe()
-            task.standardOutput = pipe
-            task.standardError = Pipe()
-            do { try task.run() } catch {
-                DispatchQueue.main.async { completion(nil) }
-                return
-            }
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             task.waitUntilExit()
             let payload = try? JSONDecoder().decode(QuotaPayload.self, from: data)
-            DispatchQueue.main.async { completion(payload) }
+            DispatchQueue.main.async {
+                guard requestGeneration == self.generation else { return }
+                self.activeTask = nil
+                completion(payload)
+            }
         }
     }
 }
@@ -181,13 +200,18 @@ final class QuotaView: NSView {
             drawText("…", at: NSPoint(x: xLabel, y: 7), color: .gray, size: 13)
             return
         }
-        guard s.ok, let five = s.five, let week = s.week else {
+        let windows = s.windows ?? [s.five, s.week].compactMap { $0 }
+        guard s.ok, !windows.isEmpty else {
             drawText(L("no data", "暂无数据"), at: NSPoint(x: xLabel, y: 7), color: .gray, size: 13)
             return
         }
 
-        drawRow(top: true, label: "5h", window: five, resetStyle: .clock)
-        drawRow(top: false, label: "7d", window: week, resetStyle: .remaining)
+        for (index, window) in windows.prefix(2).enumerated() {
+            let label = window.label ?? (index == 0 ? "5h" : "7d")
+            let clock = window.minutes.map { $0 <= 1440 } ?? (label == "5h")
+            drawRow(yOffset: windows.count == 1 ? 7.5 : CGFloat(index) * 15,
+                    label: label, window: window, resetStyle: clock ? .clock : .remaining)
+        }
 
         if s.attention == true {
             // Waiting-for-you reminder: red badge with white "!" on the logo's top-right.
@@ -214,9 +238,9 @@ final class QuotaView: NSView {
 
     private enum ResetStyle { case clock, remaining }
 
-    private func drawRow(top: Bool, label: String, window: QuotaWindow, resetStyle: ResetStyle) {
-        let yText: CGFloat = top ? 0.5 : 15.5
-        let yBar: CGFloat = top ? 3 : 18
+    private func drawRow(yOffset: CGFloat, label: String, window: QuotaWindow, resetStyle: ResetStyle) {
+        let yText: CGFloat = yOffset + 0.5
+        let yBar: CGFloat = yOffset + 3
 
         drawText(label, at: NSPoint(x: xLabel, y: yText + 1.5), color: NSColor(white: 0.78, alpha: 1), size: 11.5)
 
@@ -327,6 +351,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
                                       fallbackURL: "https://chatgpt.com/codex/settings/usage")
     private var bar: NSTouchBar!
     private var quotaTimer: Timer?
+    private var claudeEnabled: Bool { UserDefaults.standard.object(forKey: "showClaude") as? Bool ?? true }
+    private var codexEnabled: Bool { UserDefaults.standard.object(forKey: "showCodex") as? Bool ?? true }
+    private var claudeItem: NSMenuItem!
+    private var codexItem: NSMenuItem!
+    private var codexPlanItem: NSMenuItem!
+
+    private func updateVisibleServices() {
+        bar.defaultItemIdentifiers = [.esc]
+            + (claudeEnabled ? [.claudeQuota] : [])
+            + (codexEnabled ? [.codexQuota] : [])
+        claudeItem.state = claudeEnabled ? .on : .off
+        codexItem.state = codexEnabled ? .on : .off
+    }
+
+    @objc private func toggleService(_ sender: NSMenuItem) {
+        let key = sender === claudeItem ? "showClaude" : "showCodex"
+        let enabled = sender === claudeItem ? claudeEnabled : codexEnabled
+        UserDefaults.standard.set(!enabled, forKey: key)
+        fetcher.cancel()
+        claudeView.service = nil
+        codexView.service = nil
+        updateVisibleServices()
+        updateCodexPlanTitle()
+        syncStatusAttention()
+        present()
+        refresh()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        quotaTimer?.invalidate()
+        fetcher.cancel()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Single instance: a second copy (e.g. login item + manual launch) would fight
@@ -347,7 +403,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
 
         bar = NSTouchBar()
         bar.delegate = self
-        bar.defaultItemIdentifiers = [.esc, .claudeQuota, .codexQuota]
+        updateVisibleServices()
 
         present()
 
@@ -370,6 +426,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
         statusItem.button?.image = AppDelegate.gaugeIcon()
         let menu = NSMenu()
         menu.delegate = self   // refresh dynamic item states each time the menu opens
+        claudeItem = NSMenuItem(title: L("Show CC (Claude Code)", "显示 CC（Claude Code）"), action: #selector(toggleService(_:)), keyEquivalent: "")
+        codexItem = NSMenuItem(title: L("Show Codex", "显示 Codex"), action: #selector(toggleService(_:)), keyEquivalent: "")
+        claudeItem.target = self
+        codexItem.target = self
+        menu.addItem(claudeItem)
+        menu.addItem(codexItem)
+        codexPlanItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        menu.addItem(codexPlanItem)
+        updateCodexPlanTitle()
+        menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: L("Refresh now", "立即刷新"), action: #selector(refreshForced), keyEquivalent: "r"))
         menu.addItem(NSMenuItem(title: L("Re-show Touch Bar", "重新显示 Touch Bar"), action: #selector(present), keyEquivalent: "t"))
         menu.addItem(.separator())
@@ -383,11 +449,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
         loginItem = NSMenuItem(title: L("Start at login", "开机自启"), action: #selector(toggleLogin), keyEquivalent: "")
         menu.addItem(loginItem)
         menu.addItem(.separator())
+        let aboutItem = NSMenuItem(title: L("About QuotaStrip…", "关于 QuotaStrip…"), action: #selector(showAbout), keyEquivalent: "")
+        aboutItem.target = self
+        menu.addItem(aboutItem)
         menu.addItem(NSMenuItem(title: L("Quit QuotaStrip", "退出 QuotaStrip"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         statusItem.menu = menu
     }
 
+    private func updateCodexPlanTitle() {
+        let status: String
+        if !codexEnabled {
+            status = L("disabled", "已停用")
+        } else if let plan = codexView.service?.plan_type, !plan.isEmpty {
+            let name: String
+            switch plan.lowercased() {
+            case "plus": name = "Plus"
+            case "pro": name = "Pro"
+            case "prolite": name = "Pro (prolite)"
+            default: name = String(plan.prefix(20))
+            }
+            status = name + L(" (auto)", "（自动）")
+        } else {
+            status = L("awaiting local log", "等待本地日志")
+        }
+        codexPlanItem.title = L("Codex plan: ", "Codex 账号：") + status
+    }
+
     func menuNeedsUpdate(_ menu: NSMenu) {
+        updateCodexPlanTitle()
         loginItem.state = loginEnabled ? .on : .off
         // Hide the esc-permission item once Accessibility is granted (silent check, no prompt).
         escPermItem.isHidden = AXIsProcessTrusted()
@@ -491,21 +580,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTouchBarDelegate, NS
     }
 
     private func doRefresh(force: Bool) {
-        fetcher.fetch(force: force) { [weak self] payload in
+        fetcher.fetch(claude: claudeEnabled, codex: codexEnabled, force: force) { [weak self] payload in
             guard let self, let payload else { return }
             self.claudeView.service = payload.claude
             self.codexView.service = payload.codex
+            self.updateCodexPlanTitle()
             self.syncStatusAttention()
         }
     }
 
     private func syncStatusAttention() {
-        let attention = (claudeView.service?.attention == true)
-            || (codexView.service?.attention == true)
+        let attention = (claudeEnabled && claudeView.service?.attention == true)
+            || (codexEnabled && codexView.service?.attention == true)
         updateStatusAttention(attention)
     }
 
     // MARK: Actions
+
+    @objc private func showAbout() {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let version = info["CFBundleShortVersionString"] as? String ?? "—"
+        let build = info["CFBundleVersion"] as? String ?? "—"
+        let credits = NSMutableAttributedString(string: L(
+            "Claude Code and Codex quota in your Touch Bar.\n\n",
+            "在 Touch Bar 查看 Claude Code 和 Codex 额度。\n\n"))
+        credits.append(NSAttributedString(string: "GitHub · hohocf/QuotaStrip", attributes: [
+            .link: URL(string: "https://github.com/hohocf/QuotaStrip")!
+        ]))
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.orderFrontStandardAboutPanel(options: [
+            .applicationName: "QuotaStrip",
+            .applicationVersion: version,
+            .version: build,
+            .credits: credits
+        ])
+    }
 
     @objc private func escPressed() {
         for down in [true, false] {

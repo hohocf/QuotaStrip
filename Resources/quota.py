@@ -221,13 +221,30 @@ def dig(obj, key):
 
 
 def codex_window(window):
-    """A window past its reset time has zeroed out and has no reset time."""
-    if not window:
-        return {"pct": 0.0, "reset": None}
+    """Keep actual duration; missing or expired usage is unknown, never invented zero."""
+    if not isinstance(window, dict) or not window:
+        return None
+    minutes = window.get("window_minutes")
+    if isinstance(minutes, (int, float)) and minutes > 0:
+        if minutes % 1440 == 0:
+            label = f"{minutes / 1440:g}d"
+        elif minutes % 60 == 0:
+            label = f"{minutes / 60:g}h"
+        else:
+            label = f"{minutes:g}m"
+    else:
+        label = "?"
     reset = window.get("resets_at")
-    if reset is not None and reset < time.time():
-        return {"pct": 0.0, "reset": None}
-    return {"pct": float(window.get("used_percent") or 0), "reset": reset}
+    pct = window.get("used_percent")
+    if reset is not None and reset <= time.time():
+        pct, reset = None, None
+    return {"pct": float(pct) if pct is not None else None, "reset": reset,
+            "label": label, "minutes": minutes}
+
+
+def codex_windows(rate_limits):
+    return [parsed for key in ("primary", "secondary")
+            if (parsed := codex_window(rate_limits.get(key))) is not None]
 
 
 def codex_fetch():
@@ -240,8 +257,8 @@ def codex_fetch():
         except OSError:
             continue
         if rl:
-            return {"five": codex_window(rl.get("primary")),
-                    "week": codex_window(rl.get("secondary")),
+            return {"windows": codex_windows(rl),
+                    "plan_type": rl.get("plan_type"),
                     "attention": attention_flag("codex", latest_mtime)}
     return None
 
@@ -313,16 +330,27 @@ def claude_waiting():
 def service_json(data, stale=False, attention=None):
     if data is None:
         return {"ok": False}
-    return {"ok": True, "stale": stale, "five": data["five"], "week": data["week"],
-            "attention": data.get("attention", attention) or False}
+    result = {"ok": True, "stale": stale,
+              "attention": data.get("attention", attention) or False}
+    if "windows" in data:
+        result["windows"] = data["windows"]
+        result["plan_type"] = data.get("plan_type")
+    else:
+        result.update(five=data["five"], week=data["week"])
+    return result
 
 
 def fmt_text(name, data, stale):
     if data is None:
         return f"{name} --"
-    five, week = data["five"]["pct"], data["week"]["pct"]
+    windows = data.get("windows")
+    if windows is None:
+        windows = [data["five"], data["week"]]
+    known = [w["pct"] for w in windows if w["pct"] is not None]
     mark = "°" if stale else ""
-    return f"{dot(max(five, week))}{name} {five:.0f}·{week:.0f}{mark}"
+    values = "·".join((w.get("label", "") + ":" if "label" in w else "")
+                      + (f"{w['pct']:.0f}" if w["pct"] is not None else "—") for w in windows)
+    return f"{dot(max(known)) if known else ''}{name} {values or '--'}{mark}"
 
 
 def main():
@@ -332,11 +360,13 @@ def main():
     elif which == "codex":
         print(fmt_text("CDX", codex_fetch(), False))
     else:
-        cl, stale = claude_fetch(force="--force" in sys.argv)
-        claude_attn = attention_flag("claude") or claude_waiting()
+        cl, stale, claude_attn = None, False, False
+        if "--no-claude" not in sys.argv:
+            cl, stale = claude_fetch(force="--force" in sys.argv)
+            claude_attn = attention_flag("claude") or claude_waiting()
         print(json.dumps({
             "claude": service_json(cl, stale, attention=claude_attn),
-            "codex": service_json(codex_fetch()),
+            "codex": service_json(codex_fetch() if "--no-codex" not in sys.argv else None),
         }))
 
 

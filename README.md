@@ -149,3 +149,17 @@ read it, or build it yourself.
 
 Logos for Claude and Codex belong to Anthropic and OpenAI respectively and are used only to
 identify each service.
+
+### Choose services
+
+Use the menu bar checkboxes **Show CC (Claude Code)** and **Show Codex** to select either or both services. Choices persist across launches. Disabled services are hidden from the Touch Bar and skipped by automatic and manual refreshes. With both disabled, no reader process starts. Changing the selection terminates the current reader; requests already sent cannot be recalled.
+
+Codex usage and reset timestamps come exclusively from local `~/.codex/sessions` logs, including forced refreshes, without networking or credential access. Fresh server values require updated local logs. Enabled CC retains its existing usage API and cache behavior.
+
+Codex rows use the actual `window_minutes` from local logs instead of assuming primary/secondary mean 5h/7d. A weekly-only quota displays one centered 7d row. Missing windows are omitted; expired or unknown usage displays an em dash until local logs update.
+
+The menu automatically displays the Codex plan from local `plan_type` metadata (such as Plus, Pro, or Pro (prolite)). No manual plan selection is required. Actual quota windows determine the rows for every plan, including both 5h/7d and weekly-only accounts. After switching accounts, the label and quotas update when new local quota records arrive; old logs may still describe the previous account.
+
+### Version information
+
+Choose **About QuotaStrip…** in the menu bar to see the version, build number, and GitHub project link. Current version: **1.1.0 (build 2)**. See [CHANGELOG.md](CHANGELOG.md) for changes.
